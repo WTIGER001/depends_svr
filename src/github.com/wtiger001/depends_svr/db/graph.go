@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"strconv"
 	"time"
 
 	jira "github.com/andygrunwald/go-jira"
@@ -69,6 +70,17 @@ func (graph *Graph) add(item *GraphItem) {
 	}
 }
 
+func (graph *Graph) addSprint(sprint *jira.Sprint) {
+	n := Node()
+	n.Data.Id = strconv.Itoa(sprint.ID)
+	n.Data.Label = sprint.Name
+	n.Data.StartDate = sprint.StartDate.String()
+	n.Data.FinishDate = sprint.EndDate.String()
+	n.Data.Status = sprint.State
+	n.Data.Type = "Sprint"
+	graph.add(n)
+}
+
 func (graph *Graph) addStatic(issues *IssueList) {
 	defer timeTrack(time.Now(), "Add Static Nodes")
 
@@ -83,6 +95,7 @@ func (graph *Graph) addStatic(issues *IssueList) {
 		n.Data.Label = issue.Fields.Summary
 		n.Data.Description = issue.Fields.Description
 		n.Data.Component = first(issue.Fields.Components)
+		n.Data.Type = issue.Fields.Type.Name
 		cntNodes++
 		graph.add(n)
 

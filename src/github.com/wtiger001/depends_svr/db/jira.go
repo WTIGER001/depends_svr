@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http/httputil"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,10 +41,98 @@ func ExtractData(cfg *JiraConfig) {
 	jiraClient, _ := jira.NewClient(nil, cfg.JiraURL)
 	jiraClient.Authentication.SetBasicAuth(cfg.User, cfg.Password)
 
-	loadStaticIssues(cfg, jiraClient, graph)
+	// Load the issue types we consider static
+	//loadStaticIssues(cfg, jiraClient, graph)
 
-	// Request the sprints
+	// load the sprints
+	loadBoards(cfg, jiraClient, graph)
+
+	// save the database
 	graph.save()
+}
+
+func loadBoards(cfg *JiraConfig, jiraClient *jira.Client, graph *Graph) (err error) {
+	defer timeTrack(time.Now(), "Load Boards")
+	startAt := 0
+	pageSize := 100
+
+	for {
+		// Request the issue types that we consider static
+		boardOpts := new(jira.BoardListOptions)
+		boardOpts.ProjectKeyOrID = "PIR"
+		boardOpts.StartAt = startAt
+		boardOpts.MaxResults = pageSize
+		boards, res, err := jiraClient.Board.GetAllBoards(boardOpts)
+		if err != nil {
+			log.Printf("%+v\n", res)
+			log.Printf("Load Boards\n")
+			panic(err)
+		}
+
+		// for _, board := range boards.Values {
+		// 	log.Printf("\tBoard : %s Type: %s ID: %d\n", board.Name, board.Type, board.ID)
+		// 	// log.Printf("%+v\n", board)
+		// }
+
+		for _, board := range boards.Values {
+			// log.Printf("\tBoard : %s\n", board.Name)
+			// log.Printf("%+v\n", board)
+			if board.Type == "kanban" {
+				log.Printf("\tSkipping Board : %s Type: %s ID: %d\n", board.Name, board.Type, board.ID)
+			} else {
+				log.Printf("\tBoard : %s Type: %s ID: %d\n", board.Name, board.Type, board.ID)
+				loadSprints(&board, cfg, jiraClient, graph)
+			}
+		}
+
+		startAt = boards.StartAt + boards.MaxResults
+
+		if boards.Total <= (boards.StartAt + boards.MaxResults) {
+			log.Printf("Graph contains %d Items \n\n", len(graph.Items))
+			return nil
+		}
+	}
+
+}
+
+func loadSprints(board *jira.Board, cfg *JiraConfig, jiraClient *jira.Client, graph *Graph) (err error) {
+	sprints, res, err := jiraClient.Board.GetAllSprints(strconv.Itoa(board.ID))
+	if err != nil {
+		log.Printf(">>> %+v\n", res)
+		log.Printf(">>> Load Sprints for Board %s Type: %s ID: %d\n", board.Name, board.Type, board.ID)
+
+		panic(err)
+	}
+
+	for _, sprint := range sprints {
+		log.Printf("\t\tSprint : %s\n", sprint.Name)
+		// loadSprint(&sprint, cfg, jiraClient, graph)
+	}
+
+	return nil
+}
+
+func loadSprint(sprint *jira.Sprint, cfg *JiraConfig, jiraClient *jira.Client, graph *Graph) (err error) {
+	// Add the Sprint node
+	graph.addSprint(sprint)
+
+	// Get the issues
+	issues, res, err := jiraClient.Sprint.GetIssuesForSprint(sprint.ID)
+	if err != nil {
+		log.Printf("%+v\n", res)
+		log.Printf("Load Sprint %s\n", sprint.Name)
+		panic(err)
+	}
+
+	// Aggregate the issues
+	for _, issue := range issues {
+		aggregateSprintIssue(sprint, &issue, cfg, graph)
+	}
+	return nil
+}
+
+func aggregateSprintIssue(sprint *jira.Sprint, issue *jira.Issue, cfg *JiraConfig, graph *Graph) {
+
 }
 
 func loadStaticIssues(cfg *JiraConfig, jiraClient *jira.Client, graph *Graph) (err error) {
