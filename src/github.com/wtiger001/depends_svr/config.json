@@ -1,0 +1,18 @@
+{
+  "jiras": [
+    {
+      "username": "john.a.bauer",
+      "url": "https://jira.di2e.net/",
+      "projects": ["PIR"],
+      "capablity-issue-type": "New Capability",
+      "feature-issue-type": "New Feature",
+      "requirement-issue-type": "Requirement",
+      "thread-issue-type": "",
+      "parent-link": "is parent task of",
+      "child-link": "is child task of",
+      "traces-to-link": "traces to",
+      "traces-from-link": "traces from",
+      "process-prefix": "process_"
+    }
+  ]
+}
