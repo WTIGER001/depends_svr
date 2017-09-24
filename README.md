@@ -18,7 +18,7 @@ set GOPATH=depends_svr
 go get
 go build
 cd src/github.com/wtiger001/depends_svr
-./depends_svr.exe --user=<DI2E USER NAME> --password=<DI2E Password>
+depends_svr.exe --user=<DI2E USER NAME> --password=<DI2E Password>
 ```
 
 a file (output.json) will be created that can be imported into the depends tool
