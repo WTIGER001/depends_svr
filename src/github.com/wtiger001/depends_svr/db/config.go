@@ -21,8 +21,11 @@ type JiraConfig struct {
 	ChildLink            string   `json:"child-link"`
 	TracesToLink         string   `json:"traces-to-link"`
 	TracesFromLink       string   `json:"traces-from-link"`
+	DependsLinkOut       string   `json:"depends-link-out"`
+	DependsLinkIn        string   `json:"depends-link-in"`
 	ProcessPrefix        string   `json:"process-prefix"`
 	Debug                bool     `json:"debug"`
+	OutputFile           string   `json:"output-file"`
 }
 
 func (cfg *JiraConfig) Print() {
@@ -51,10 +54,10 @@ func (cfg *JiraConfig) ApplyDefaults() {
 		cfg.ThreadIssueType = "Thread"
 	}
 	if cfg.ParentLink == "" {
-		cfg.ParentLink = "is parent task of"
+		cfg.ParentLink = "is parent of"
 	}
 	if cfg.ChildLink == "" {
-		cfg.ChildLink = "is child task of"
+		cfg.ChildLink = "is a child of"
 	}
 	if cfg.TracesToLink == "" {
 		cfg.TracesToLink = "traces to"
@@ -62,14 +65,24 @@ func (cfg *JiraConfig) ApplyDefaults() {
 	if cfg.TracesFromLink == "" {
 		cfg.TracesFromLink = "traces from"
 	}
+	if cfg.DependsLinkOut == "" {
+		cfg.DependsLinkOut = "depends on"
+	}
+	if cfg.DependsLinkIn == "" {
+		cfg.DependsLinkIn = "is a dependency of"
+	}
 	if cfg.ProcessPrefix == "" {
 		cfg.ProcessPrefix = "process_"
 	}
 	if cfg.JiraURL == "" {
 		cfg.JiraURL = "https://jira.di2e.net"
 	}
+	if cfg.OutputFile == "" {
+		cfg.OutputFile = "output.json"
+	}
 	cfg.Debug = false
 	cfg.User = "john.a.bauer"
+	cfg.Password = "!QAZ@WSX#EDC4rfv5tgb"
 }
 
 // Load from file

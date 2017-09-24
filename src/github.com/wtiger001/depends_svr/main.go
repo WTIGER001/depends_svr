@@ -44,6 +44,7 @@ func getConfig() *db.JiraConfig {
 	flag.StringVar(&cfg.Password, "password", cfg.Password, "JIRA Password")
 	flag.StringVar(&cfg.JiraURL, "url", cfg.JiraURL, "JIRA URL")
 	flag.BoolVar(&cfg.Debug, "debug", cfg.Debug, "Enable Debuging mode")
+	flag.StringVar(&cfg.OutputFile, "out", cfg.OutputFile, "Output File")
 	flag.Parse()
 
 	// Validate and ask for missing fields from the command line
@@ -51,7 +52,9 @@ func getConfig() *db.JiraConfig {
 		readFromTerminal(cfg)
 	}
 
-	cfg.Print()
+	if cfg.Debug {
+		cfg.Print()
+	}
 
 	return cfg
 }

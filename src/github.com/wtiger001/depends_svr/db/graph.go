@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	jira "github.com/andygrunwald/go-jira"
@@ -37,6 +39,8 @@ type Data struct {
 	StartDate   string `json:"start_date,omitempty"`
 	FinishDate  string `json:"finish_date,omitempty"`
 	Description string `json:"description,omitempty"`
+	typeSource  string
+	typeTarget  string
 }
 
 func Node() *GraphItem {
@@ -62,6 +66,10 @@ func NewGraph() *Graph {
 }
 
 func (graph *Graph) add(item *GraphItem) {
+	item.Data.Id = validID(item.Data.Id)
+	item.Data.Target = validID(item.Data.Target)
+	item.Data.Source = validID(item.Data.Source)
+
 	if _, ok := graph.m[item.Data.Id]; ok {
 		log.Printf("Duplicate nodes with key " + item.Data.Id)
 	} else {
@@ -74,14 +82,53 @@ func (graph *Graph) addSprint(sprint *jira.Sprint) {
 	n := Node()
 	n.Data.Id = strconv.Itoa(sprint.ID)
 	n.Data.Label = sprint.Name
-	n.Data.StartDate = sprint.StartDate.String()
-	n.Data.FinishDate = sprint.EndDate.String()
+	if sprint.StartDate != nil {
+		n.Data.StartDate = sprint.StartDate.String()
+	}
+	if sprint.EndDate != nil {
+		n.Data.FinishDate = sprint.EndDate.String()
+	}
 	n.Data.Status = sprint.State
 	n.Data.Type = "Sprint"
 	graph.add(n)
 }
 
-func (graph *Graph) addStatic(issues *IssueList) {
+func getEdgeType(linkType string, cfg *JiraConfig) string {
+	return linkType
+}
+
+func getNodeType(nodeType string, cfg *JiraConfig) string {
+	switch nodeType {
+	case cfg.CapabilityIssueType:
+		return "capability"
+	case cfg.FeatureIssueType:
+		return "feature"
+	case cfg.ThreadIssueType:
+		return "thread"
+	case cfg.RequirementIssueType:
+		return "requirement"
+	default:
+		return nodeType
+	}
+}
+
+func supportedIssueType(issueType string, cfg *JiraConfig) bool {
+	real := getNodeType(issueType, cfg)
+	switch real {
+	case "capability":
+		return true
+	case "feature":
+		return true
+	case "thread":
+		return true
+	case "requirement":
+		return true
+	default:
+		return false
+	}
+}
+
+func (graph *Graph) addStatic(issues *IssueList, cfg *JiraConfig) {
 	defer timeTrack(time.Now(), "Add Static Nodes")
 
 	cntNodes := 0
@@ -91,38 +138,58 @@ func (graph *Graph) addStatic(issues *IssueList) {
 
 		// Create the node
 		n := Node()
-		n.Data.Id = issue.Key
+		n.Data.Id = validID(issue.Key)
 		n.Data.Label = issue.Fields.Summary
 		n.Data.Description = issue.Fields.Description
 		n.Data.Component = first(issue.Fields.Components)
-		n.Data.Type = issue.Fields.Type.Name
+		n.Data.Type = getNodeType(issue.Fields.Type.Name, cfg)
+
+		if n.Data.Type == "thread" {
+			a := issue.Fields.Unknowns["customfield_13008"]
+			if a != nil {
+				n.Data.FinishDate = a.(string)
+			}
+		}
+
 		cntNodes++
 		graph.add(n)
 
-		// Create any links (dont enforce)
+		// Create the link to the components
+		for _, c := range issue.Fields.Components {
+			graph.componentLink(c.Name, n, cfg)
+		}
+
+		// Create any links
 		for _, link := range issue.Fields.IssueLinks {
-			e := Edge()
-			e.Data.Id = link.ID
+			_, issueType, linkType, _ := linked(link)
+			if trackedLinkType(linkType, cfg) && supportedIssueType(issueType, cfg) {
+				e := Edge()
+				e.Data.Id = validID(link.ID)
 
-			if _, ok := graph.m[e.Data.Id]; !ok {
-				// Duplicates are OK since links are Bi-Directional
-				if link.OutwardIssue != nil {
-					e.Data.Source = link.OutwardIssue.Key
-				} else {
-					e.Data.Source = n.Data.Id
-				}
-				if link.InwardIssue != nil {
-					e.Data.Target = link.InwardIssue.Key
-				} else {
-					e.Data.Target = n.Data.Id
-				}
+				if _, ok := graph.m[e.Data.Id]; !ok {
+					// Duplicates are OK since links are Bi-Directional
+					if link.OutwardIssue != nil {
+						e.Data.Source = link.OutwardIssue.Key
+						e.Data.typeSource = getNodeType(link.OutwardIssue.Fields.Type.Name, cfg)
+					} else {
+						e.Data.Source = n.Data.Id
+						e.Data.typeSource = n.Data.Type
+					}
+					if link.InwardIssue != nil {
+						e.Data.Target = validID(link.InwardIssue.Key)
+						e.Data.typeTarget = getNodeType(link.InwardIssue.Fields.Type.Name, cfg)
+					} else {
+						e.Data.Target = n.Data.Id
+						e.Data.typeTarget = n.Data.Type
+					}
 
-				e.Data.Type = link.Type.Name
-				if link.Comment != nil {
-					e.Data.Description = link.Comment.Body
+					e.Data.Type = getEdgeType(linkType, cfg)
+					if link.Comment != nil {
+						e.Data.Description = link.Comment.Body
+					}
+					cntEdges++
+					graph.add(e)
 				}
-				cntEdges++
-				graph.add(e)
 			}
 		}
 	}
@@ -131,18 +198,186 @@ func (graph *Graph) addStatic(issues *IssueList) {
 
 func first(components []*jira.Component) string {
 	if len(components) >= 1 {
-		return components[0].ID
+		return components[0].Name
 	}
 	return ""
 }
 
-func (graph *Graph) save() (err error) {
-	return graph.saveAs("output.json")
+func (graph *Graph) save(cfg *JiraConfig) (err error) {
+	return graph.saveAs(cfg.OutputFile)
 }
 
 func (graph *Graph) saveAs(file string) (err error) {
 	defer timeTrack(time.Now(), "Save Output as "+file)
-	graphJson, _ := json.Marshal(graph)
-	err = ioutil.WriteFile(file, graphJson, 0644)
+
+	graph.printSummary()
+
+	sort.Slice(graph.Items, func(i, j int) bool {
+		return graph.Items[i].Group > graph.Items[j].Group
+	})
+
+	graphJSON, _ := json.Marshal(graph)
+	err = ioutil.WriteFile(file, graphJSON, 0644)
+
+	log.Printf("Wrote %s file for database containing %d nodes and edges\n", file, len(graph.Items))
+
 	return err
+}
+
+func (graph *Graph) checkForMissing() {
+	ok := 0
+	bad := 0
+	log.Printf("Checking Node Structure\n")
+	log.Printf("-----------------------------------------\n")
+	for _, item := range graph.Items {
+		if item.Group == "edges" {
+			if item.Data.Target == "" {
+				log.Printf("\tEmpty Target\n")
+				bad++
+			} else if item.Data.Source == "" {
+				log.Printf("\tEmpty Source\n")
+				bad++
+			} else if !graph.exists(item.Data.Target) {
+				log.Printf("\tMising Target Node: %s (%s)\n", item.Data.Target, item.Data.typeTarget)
+				bad++
+			} else if !graph.exists(item.Data.Target) {
+				log.Printf("\tMising Source Node: %s (%s)\n", item.Data.Source, item.Data.typeSource)
+				bad++
+			} else {
+				ok++
+			}
+		}
+	}
+	log.Printf("-----------------------------------------\n")
+	log.Printf("Good: %d, Bad: %d\n", ok, bad)
+}
+
+func (graph *Graph) addMissingNodes(cfg *JiraConfig) {
+	// Add all the missing nodes
+	for _, item := range graph.Items {
+		if item.Group == "edges" {
+			if item.Data.Target != "" && item.Data.Source != "" {
+				if !graph.exists(item.Data.Target) {
+					log.Printf("Mising Target Node: " + item.Data.Target)
+					graph.guessNode(item.Data.typeTarget, item.Data.Target)
+				}
+				if !graph.exists(item.Data.Source) {
+					log.Printf("Mising Source Node: " + item.Data.Target)
+					graph.guessNode(item.Data.typeSource, item.Data.Source)
+				}
+			}
+		}
+	}
+}
+
+func (graph *Graph) trimMissing(cfg *JiraConfig) {
+	del := *new([]int)
+	// Add all the missing nodes
+	for i, item := range graph.Items {
+		if item.Group == "edges" {
+			if item.Data.Target != "" && item.Data.Source != "" {
+				if !graph.exists(item.Data.Target) {
+					del = append(del, i)
+				} else if !graph.exists(item.Data.Source) {
+					del = append(del, i)
+				}
+			}
+		}
+	}
+
+	for i := len(del) - 1; i >= 0; i-- {
+		graph.Items = append(graph.Items[:i], graph.Items[i+1:]...)
+	}
+}
+
+func (graph *Graph) guessNode(expectType string, id string) {
+	n := Node()
+	n.Data.Id = validID(id)
+	n.Data.Label = id
+	n.Data.Type = expectType
+}
+
+func (graph *Graph) componentLink(component string, n *GraphItem, cfg *JiraConfig) {
+	cNode := graph.componentNode(component, "")
+
+	if cNode == nil || n == nil {
+		log.Printf("WHATTTTTT ")
+	} else {
+		e := Edge()
+		e.Data.Id = n.Data.Id + "_COMPONENT_" + cNode.Data.Id
+		e.Data.Target = cNode.Data.Id
+		e.Data.Source = n.Data.Id
+		e.Data.Type = cfg.DependsLinkOut
+		graph.add(e)
+	}
+}
+
+func (graph *Graph) componentNode(component string, desc string) *GraphItem {
+	real := validID(component)
+	if !graph.exists(real) {
+		n := Node()
+		n.Data.Id = real
+		n.Data.Label = component
+		n.Data.Description = desc
+		n.Data.Type = "component"
+		graph.add(n)
+	}
+	return graph.m[real]
+}
+
+func (graph *Graph) exists(k string) bool {
+	_, ok := graph.m[k]
+	return ok
+}
+
+func (graph *Graph) printSummary() {
+	nodes, edges := graph.histogram()
+
+	sumNodes := 0
+	sumEdges := 0
+	for _, v := range nodes {
+		sumNodes += v
+	}
+	for _, v := range edges {
+		sumEdges += v
+	}
+
+	log.Printf("GRAPH SUMMARY\n")
+	log.Printf("-----------------------------------------\n")
+	log.Printf("%-33s:%6d\n", "Nodes", sumNodes)
+	for k, v := range nodes {
+		log.Printf("   %-30s:%6d\n", k, v)
+	}
+	log.Printf("%-33s:%6d\n", "Edges", sumEdges)
+	for k, v := range edges {
+		log.Printf("   %-30s:%6d\n", k, v)
+	}
+	log.Printf("-----------------------------------------\n")
+
+	graph.checkForMissing()
+}
+
+func validID(id string) string {
+	newID := strings.Replace(id, " ", "_", -1)
+	return newID
+}
+
+func (graph *Graph) histogram() (nodes map[string]int, edges map[string]int) {
+	nodes = make(map[string]int)
+	edges = make(map[string]int)
+
+	for _, item := range graph.Items {
+		key := item.Data.Type
+		if item.Group == "edges" {
+			v := edges[key]
+			v++
+			edges[key] = v
+		} else {
+			v := nodes[key]
+			v++
+			nodes[key] = v
+		}
+
+	}
+	return nodes, edges
 }
