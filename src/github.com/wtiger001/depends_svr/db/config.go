@@ -81,8 +81,6 @@ func (cfg *JiraConfig) ApplyDefaults() {
 		cfg.OutputFile = "output.json"
 	}
 	cfg.Debug = false
-	cfg.User = "john.a.bauer"
-	cfg.Password = "!QAZ@WSX#EDC4rfv5tgb"
 }
 
 // Load from file
